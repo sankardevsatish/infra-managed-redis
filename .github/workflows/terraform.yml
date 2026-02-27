@@ -1,0 +1,256 @@
+name: "Terraform Managed Redis"
+
+# ──────────────────────────────────────────────
+# TRIGGERS
+# ──────────────────────────────────────────────
+on:
+  # Run plan on pull requests to main
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "components/**"
+      - "environments/**"
+      - ".github/workflows/terraform.yml"
+
+  # Run apply on push to main (after PR merge)
+  push:
+    branches:
+      - main
+    paths:
+      - "components/**"
+      - "environments/**"
+      - ".github/workflows/terraform.yml"
+
+  # Manual trigger with environment selection
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          # - qa        # Uncomment when ready
+          # - live      # Uncomment when ready
+      action:
+        description: "Terraform action to perform"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+# ──────────────────────────────────────────────
+# PERMISSIONS (required for OIDC authentication)
+# ──────────────────────────────────────────────
+permissions:
+  id-token: write    # Required for Azure OIDC login
+  contents: read     # Required to checkout the repo
+  pull-requests: write # Required to comment plan output on PRs
+
+# ──────────────────────────────────────────────
+# ENVIRONMENT VARIABLES
+# ──────────────────────────────────────────────
+env:
+  TF_VERSION: "1.7.0"
+  WORKING_DIR: "components/managed-redis"
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_USE_OIDC: "true"
+
+  # Terraform variables (passed automatically via TF_VAR_ prefix)
+  TF_VAR_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  TF_VAR_tenant_id: ${{ secrets.ARM_TENANT_ID }}
+
+  # State backend config
+  BACKEND_RESOURCE_GROUP: ${{ secrets.BACKEND_RESOURCE_GROUP }}
+  BACKEND_STORAGE_ACCOUNT: ${{ secrets.BACKEND_STORAGE_ACCOUNT }}
+  BACKEND_CONTAINER: ${{ secrets.BACKEND_CONTAINER }}
+
+jobs:
+  # ──────────────────────────────────────────────
+  # JOB 1: TERRAFORM PLAN
+  # ──────────────────────────────────────────────
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    # runs-on: self-hosted     # Uncomment for self-hosted runner
+
+    env:
+      TF_ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Configure git to use HTTPS instead of SSH for module downloads
+      # This allows terraform init to clone the module repo without SSH keys.
+      # If the module repo is PRIVATE, uncomment the token line below.
+      - name: Configure git for module access
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          # For private module repos, uncomment the next line and add MODULE_REPO_PAT secret:
+          # git config --global url."https://x-access-token:${{ secrets.MODULE_REPO_PAT }}@github.com/".insteadOf "git@github.com:"
+
+      # Step 3: Authenticate to Azure using OIDC (Federated Credentials)
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      # Step 4: Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true  # Enables output capturing for PR comments
+
+      # Step 5: Terraform Init (initialise with remote backend + download modules)
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ env.BACKEND_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.BACKEND_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.BACKEND_CONTAINER }}" \
+            -backend-config="key=uksouth/managed-redis/${{ env.TF_ENVIRONMENT }}/terraform.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="subscription_id=${{ env.ARM_SUBSCRIPTION_ID }}" \
+            -backend-config="tenant_id=${{ env.ARM_TENANT_ID }}"
+
+      # Step 6: Terraform Format Check
+      - name: Terraform Format Check
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      # Step 7: Terraform Validate
+      - name: Terraform Validate
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform validate
+
+      # Step 8: Terraform Plan
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var-file="../../environments/${{ env.TF_ENVIRONMENT }}.tfvars" \
+            -out=tfplan \
+            -input=false
+        continue-on-error: true
+
+      # Step 9: Post plan output as PR comment (only on pull requests)
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Plan
+            **Environment:** \`${{ env.TF_ENVIRONMENT }}\`
+            **Plan:** \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan Output</summary>
+
+            \`\`\`terraform
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      # Step 10: Fail the job if plan failed
+      - name: Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      # Step 11: Upload the plan file as artifact (for the apply job)
+      - name: Upload Plan Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.TF_ENVIRONMENT }}
+          path: ${{ env.WORKING_DIR }}/tfplan
+          retention-days: 5
+
+  # ──────────────────────────────────────────────
+  # JOB 2: TERRAFORM APPLY
+  # ──────────────────────────────────────────────
+  terraform-apply:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+    # runs-on: self-hosted     # Uncomment for self-hosted runner
+    needs: terraform-plan
+
+    # Only run apply on push to main OR manual dispatch with action=apply
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+
+    # GitHub Environment for manual approval gates
+    environment:
+      name: ${{ github.event.inputs.environment || 'dev' }}
+
+    env:
+      TF_ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure git for module access
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          # For private module repos, uncomment the next line:
+          # git config --global url."https://x-access-token:${{ secrets.MODULE_REPO_PAT }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ env.BACKEND_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.BACKEND_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.BACKEND_CONTAINER }}" \
+            -backend-config="key=uksouth/managed-redis/${{ env.TF_ENVIRONMENT }}/terraform.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="subscription_id=${{ env.ARM_SUBSCRIPTION_ID }}" \
+            -backend-config="tenant_id=${{ env.ARM_TENANT_ID }}"
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ env.TF_ENVIRONMENT }}
+          path: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Apply
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform apply -auto-approve -input=false tfplan
