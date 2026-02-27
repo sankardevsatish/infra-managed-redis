@@ -85,9 +85,6 @@ validate_inputs() {
   [[ -z "${ARM_SUBSCRIPTION_ID:-}" ]]       && missing+=("ARM_SUBSCRIPTION_ID")
   [[ -z "${ARM_TENANT_ID:-}" ]]             && missing+=("ARM_TENANT_ID")
   [[ -z "${ARM_CLIENT_ID:-}" ]]             && missing+=("ARM_CLIENT_ID")
-  [[ -z "${BACKEND_RESOURCE_GROUP:-}" ]]    && missing+=("BACKEND_RESOURCE_GROUP")
-  [[ -z "${BACKEND_STORAGE_ACCOUNT:-}" ]]   && missing+=("BACKEND_STORAGE_ACCOUNT")
-  [[ -z "${BACKEND_CONTAINER:-}" ]]         && missing+=("BACKEND_CONTAINER")
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     log_error "Missing required environment variables:"
@@ -188,14 +185,7 @@ configure_git() {
 terraform_init() {
   log_info "Running terraform init (environment: ${ENVIRONMENT})..."
 
-  terraform -chdir="${WORKING_DIR}" init \
-    -backend-config="resource_group_name=${BACKEND_RESOURCE_GROUP}" \
-    -backend-config="storage_account_name=${BACKEND_STORAGE_ACCOUNT}" \
-    -backend-config="container_name=${BACKEND_CONTAINER}" \
-    -backend-config="key=uksouth/managed-redis/${ENVIRONMENT}/terraform.tfstate" \
-    -backend-config="use_oidc=true" \
-    -backend-config="subscription_id=${ARM_SUBSCRIPTION_ID}" \
-    -backend-config="tenant_id=${ARM_TENANT_ID}"
+  terraform -chdir="${WORKING_DIR}" init
 
   log_success "Terraform initialised"
 }
