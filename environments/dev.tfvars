@@ -5,7 +5,7 @@ config = {
   sku_name            = "Balanced_B0"
 
   # -------- Core Settings --------
-  high_availability_enabled = true
+  high_availability_enabled = false
   public_network_access     = "Disabled"
 
   # -------- Identity (Optional) --------
