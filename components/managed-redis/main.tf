@@ -1,5 +1,5 @@
 module "redis" {
-  source = "git::https://github.com/sankardevsatish/terraform-managed-redis-modules.git"
+  source = "git::https://github.com/sankardevsatish/terraform-managed-redis-modules.git//modules/redis"
 
   depends_on = [
     azurerm_role_assignment.redis_kv_crypto_user,
