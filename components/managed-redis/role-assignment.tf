@@ -23,5 +23,5 @@ resource "time_sleep" "wait_for_rbac" {
     azurerm_role_assignment.terraform_kv_crypto_officer,
   ]
 
-  create_duration = "120s"
+  create_duration = "300s"
 }

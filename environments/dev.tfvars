@@ -6,7 +6,7 @@ config = {
 
   # -------- Core Settings --------
   high_availability_enabled = false
-  public_network_access     = "Disabled"
+  public_network_access     = "Enabled"
 
   # -------- Identity (Optional) --------
   identity = {
