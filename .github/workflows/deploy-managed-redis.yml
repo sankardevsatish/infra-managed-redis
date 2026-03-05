@@ -1,0 +1,157 @@
+name: Deploy Managed Redis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action to perform"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  TF_WORKING_DIR: components/managed-redis
+  TF_VAR_FILE: ../../environments/dev.tfvars
+  ARM_CLIENT_ID: 0d1e3e46-b5d9-440b-822b-5f24943460fa
+  ARM_TENANT_ID: 7420ac08-8cd7-41c5-9d81-550653e42014
+  ARM_SUBSCRIPTION_ID: ca5258fe-e34d-43ef-bbde-5d1e691ec5c9
+  ARM_USE_OIDC: true
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action != 'destroy'
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">=1.5.0"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: 0d1e3e46-b5d9-440b-822b-5f24943460fa
+          tenant-id: 7420ac08-8cd7-41c5-9d81-550653e42014
+          subscription-id: ca5258fe-e34d-43ef-bbde-5d1e691ec5c9
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -var-file="${{ env.TF_VAR_FILE }}" -out=tfplan -no-color
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+
+      - name: Post Plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan Output
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            *Triggered by @${{ github.actor }}*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: production
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">=1.5.0"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: 0d1e3e46-b5d9-440b-822b-5f24943460fa
+          tenant-id: 7420ac08-8cd7-41c5-9d81-550653e42014
+          subscription-id: ca5258fe-e34d-43ef-bbde-5d1e691ec5c9
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+  terraform-destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    environment: destroy
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">=1.5.0"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: 0d1e3e46-b5d9-440b-822b-5f24943460fa
+          tenant-id: 7420ac08-8cd7-41c5-9d81-550653e42014
+          subscription-id: ca5258fe-e34d-43ef-bbde-5d1e691ec5c9
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan Destroy
+        run: terraform plan -destroy -var-file="${{ env.TF_VAR_FILE }}" -no-color
+
+      - name: Terraform Destroy
+        run: terraform destroy -var-file="${{ env.TF_VAR_FILE }}" -auto-approve
