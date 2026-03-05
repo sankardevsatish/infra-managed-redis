@@ -18,7 +18,7 @@ config = {
 
   # -------- Customer Managed Key (Optional) --------
   customer_managed_key = {
-    key_vault_id          = "/subscriptions/ca5258fe-e34d-43ef-bbde-5d1e691ec5c9/resourceGroups/rg-dev-platform/providers/Microsoft.KeyVault/vaults/redis-keyvault-01"
+    key_vault_id          = "/subscriptions/ca5258fe-e34d-43ef-bbde-5d1e691ec5c9/resourceGroups/rg-dev-platform/providers/Microsoft.KeyVault/vaults/redis-keyvault-02"
     user_assigned_identity_id = "/subscriptions/ca5258fe-e34d-43ef-bbde-5d1e691ec5c9/resourceGroups/rg-dev-platform/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-redis-dev"
   }
 
