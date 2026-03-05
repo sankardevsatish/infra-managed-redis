@@ -1,7 +1,7 @@
 config = {
   name                = "redis-dev-001"
   resource_group_name = "rg-dev-platform"
-  location            = "uksouth"
+  location            = "ukwest"
   sku_name            = "Balanced_B0"
 
   # -------- Core Settings --------
