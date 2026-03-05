@@ -2,7 +2,7 @@ config = {
   name                = "redis-dev-001"
   resource_group_name = "rg-dev-platform"
   location            = "uksouth"
-  sku_name            = "Balanced_B1"
+  sku_name            = "Balanced_B0"
 
   # -------- Core Settings --------
   high_availability_enabled = false
