@@ -2,7 +2,7 @@ module "redis" {
   source = "git::https://github.com/sankardevsatish/terraform-managed-redis-modules.git//modules/redis"
 
   depends_on = [
-    azurerm_role_assignment.redis_kv_crypto_user,
+    time_sleep.wait_for_rbac,
   ]  
 
   config = merge(var.config, {

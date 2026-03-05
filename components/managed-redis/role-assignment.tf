@@ -14,3 +14,14 @@ resource "azurerm_role_assignment" "redis_kv_crypto_user" {
   role_definition_name = "Key Vault Crypto Service Encryption User"
   principal_id         = azurerm_user_assigned_identity.redis_uami.principal_id
 }
+
+# Wait for RBAC propagation before creating Redis
+# Azure role assignments can take several minutes to become effective
+resource "time_sleep" "wait_for_rbac" {
+  depends_on = [
+    azurerm_role_assignment.redis_kv_crypto_user,
+    azurerm_role_assignment.terraform_kv_crypto_officer,
+  ]
+
+  create_duration = "120s"
+}
